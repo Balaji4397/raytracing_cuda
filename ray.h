@@ -6,13 +6,13 @@ class ray
 {
     public:
         __device__ ray() {}
-        __device__ ray(const vec3& a, const vec3& b) { A = a; B = b; }
-        __device__ vec3 origin() const       { return A; }
-        __device__ vec3 direction() const    { return B; }
-        __device__ vec3 point_at_parameter(float t) const { return A + t*B; }
+        __device__ ray(const vec3& l, const vec3& m) { L = l; M = m; }
+        __device__ vec3 origin() const       { return L; }
+        __device__ vec3 direction() const    { return M; }
+        __device__ vec3 point_at_parameter(float t) const { return L + t*M; }
 
-        vec3 A;
-        vec3 B;
+        vec3 L;
+        vec3 M;
 };
 
 #endif

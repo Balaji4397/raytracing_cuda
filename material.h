@@ -7,27 +7,28 @@ struct hit_record;
 #include "hitable.h"
 
 
-__device__ float schlick(float cosine, float ref_idx) {
-    float r0 = (1.0f-ref_idx) / (1.0f+ref_idx);
-    r0 = r0*r0;
-    return r0 + (1.0f-r0)*pow((1.0f - cosine),5.0f);
+__device__ float schlick(float cos, float reference_index) {
+    float ref0 = (1.0f-reference_index) / (1.0f+reference_index);
+    ref0 = ref0*ref0;
+    return ref0 + (1.0f-ref0)*pow((1.0f - cos),5.0f);
 }
 
-__device__ bool refract(const vec3& v, const vec3& n, float ni_over_nt, vec3& refracted) {
-    vec3 uv = unit_vector(v);
-    float dt = dot(uv, n);
-    float discriminant = 1.0f - ni_over_nt*ni_over_nt*(1-dt*dt);
-    if (discriminant > 0) {
-        refracted = ni_over_nt*(uv - n*dt) - n*sqrt(discriminant);
-        return true;
+__device__ bool refract(const vec3& v, const vec3& n, float nint, vec3& rftd) {
+    vec3 unit_vec = unit_vector(v);
+    float dt = dot(unit_vec, n);
+    float dsc = 1.0f - nint*nint*(1-dt*dt);
+    if (dsc < 0) {
+        return false;
     }
     else
-        return false;
+        rftd = nint*(unit_vec - n*dt) - n*sqrt(dsc);
+        return true;
+        
 }
 
-#define RANDVEC3 vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
+#define RANDVEC3 vec3(curand_uniform(lrs),curand_uniform(lrs),curand_uniform(lrs))
 
-__device__ vec3 random_in_unit_sphere(curandState *local_rand_state) {
+__device__ vec3 random_in_unit_sphere(curandState *lrs) {
     vec3 p;
     do {
         p = 2.0f*RANDVEC3 - vec3(1,1,1);
@@ -41,72 +42,73 @@ __device__ vec3 reflect(const vec3& v, const vec3& n) {
 
 class material  {
     public:
-        __device__ virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered, curandState *local_rand_state) const = 0;
+        __device__ virtual bool scatter(const ray& ray_in, const hit_record& record, vec3& at, ray& sc, curandState *lrs) const = 0;
 };
 
 class lambertian : public material {
     public:
-        __device__ lambertian(const vec3& a) : albedo(a) {}
-        __device__ virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered, curandState *local_rand_state) const  {
-             vec3 target = rec.p + rec.normal + random_in_unit_sphere(local_rand_state);
-             scattered = ray(rec.p, target-rec.p);
-             attenuation = albedo;
+        __device__ lambertian(const vec3& a) : alb(a) {}
+        __device__ virtual bool scatter(const ray& ray_in, const hit_record& record, vec3& at, ray& sc, curandState *lrs) const  {
+             vec3 goal = record.p + record.normal + random_in_unit_sphere(lrs);
+             sc = ray(record.p, goal-record.p);
+             at = alb;
              return true;
         }
 
-        vec3 albedo;
+        vec3 alb;
 };
 
 class metal : public material {
     public:
-        __device__ metal(const vec3& a, float f) : albedo(a) { if (f < 1) fuzz = f; else fuzz = 1; }
-        __device__ virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered, curandState *local_rand_state) const  {
-            vec3 reflected = reflect(unit_vector(r_in.direction()), rec.normal);
-            scattered = ray(rec.p, reflected + fuzz*random_in_unit_sphere(local_rand_state));
-            attenuation = albedo;
-            return (dot(scattered.direction(), rec.normal) > 0.0f);
+        __device__ metal(const vec3& a, float f) : alb(a) { if (f > 1) fu = 1; else fu = f; }
+        __device__ virtual bool scatter(const ray& ray_in, const hit_record& record, vec3& at, ray& sc, curandState *lrs) const  {
+            vec3 rfl = reflect(unit_vector(ray_in.direction()), record.normal);
+            sc = ray(record.p, rfl + fu*random_in_unit_sphere(lrs));
+            at = alb;
+            return (dot(sc.direction(), record.normal) > 0.0f);
         }
-        vec3 albedo;
-        float fuzz;
+        vec3 alb;
+        float fu;
 };
 
 class dielectric : public material {
 public:
-    __device__ dielectric(float ri) : ref_idx(ri) {}
-    __device__ virtual bool scatter(const ray& r_in,
-                         const hit_record& rec,
-                         vec3& attenuation,
-                         ray& scattered,
-                         curandState *local_rand_state) const  {
-        vec3 outward_normal;
-        vec3 reflected = reflect(r_in.direction(), rec.normal);
-        float ni_over_nt;
-        attenuation = vec3(1.0, 1.0, 1.0);
-        vec3 refracted;
-        float reflect_prob;
-        float cosine;
-        if (dot(r_in.direction(), rec.normal) > 0.0f) {
-            outward_normal = -rec.normal;
-            ni_over_nt = ref_idx;
-            cosine = dot(r_in.direction(), rec.normal) / r_in.direction().length();
-            cosine = sqrt(1.0f - ref_idx*ref_idx*(1-cosine*cosine));
+    __device__ dielectric(float ri) : reference_index(ri) {}
+    __device__ virtual bool scatter(const ray& ray_in,
+                         const hit_record& record,
+                         vec3& at,
+                         ray& sc,
+                         curandState *lrs) const  {
+        vec3 out_norm;
+        vec3 rfl = reflect(ray_in.direction(), record.normal);
+        float nint;
+        at = vec3(1.0, 1.0, 1.0);
+        vec3 rftd;
+        float rfl_pr;
+        float cos;
+        if (dot(ray_in.direction(), record.normal) < 0.0f) {
+            
+            out_norm = record.normal;
+            nint = 1.0f / reference_index;
+            cos = -dot(ray_in.direction(), record.normal) / ray_in.direction().length();
         }
         else {
-            outward_normal = rec.normal;
-            ni_over_nt = 1.0f / ref_idx;
-            cosine = -dot(r_in.direction(), rec.normal) / r_in.direction().length();
+            out_norm = -record.normal;
+            nint = reference_index;
+            cos = dot(ray_in.direction(), record.normal) / ray_in.direction().length();
+            cos = sqrt(1.0f - reference_index*reference_index*(1-cos*cos));
         }
-        if (refract(r_in.direction(), outward_normal, ni_over_nt, refracted))
-            reflect_prob = schlick(cosine, ref_idx);
+        if (refract(ray_in.direction(), out_norm, nint, rftd))
+            rfl_pr = schlick(cos, reference_index);
         else
-            reflect_prob = 1.0f;
-        if (curand_uniform(local_rand_state) < reflect_prob)
-            scattered = ray(rec.p, reflected);
+            rfl_pr = 1.0f;
+        if (curand_uniform(lrs) > rfl_pr)
+            sc = ray(record.p, rftd);
         else
-            scattered = ray(rec.p, refracted);
+            sc = ray(record.p, rfl);
         return true;
     }
 
-    float ref_idx;
+    float reference_index;
 };
 #endif

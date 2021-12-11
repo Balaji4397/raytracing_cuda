@@ -6,24 +6,24 @@
 class hitable_list: public hitable  {
     public:
         __device__ hitable_list() {}
-        __device__ hitable_list(hitable **l, int n) {list = l; list_size = n; }
-        __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
+        __device__ hitable_list(hitable **lst, int lst_length) {list = lst; list_size = lst_length; }
+        __device__ virtual bool hit(const ray& r, float tminimum, float tmaximum, hit_record& record) const;
         hitable **list;
         int list_size;
 };
 
-__device__ bool hitable_list::hit(const ray& r, float t_min, float t_max, hit_record& rec) const {
-        hit_record temp_rec;
-        bool hit_anything = false;
-        float closest_so_far = t_max;
+__device__ bool hitable_list::hit(const ray& r, float t_minimum, float t_maximum, hit_record& record) const {
+        hit_record temp_record;
+        bool hitany = false;
+        float nearest = t_maximum;
         for (int i = 0; i < list_size; i++) {
-            if (list[i]->hit(r, t_min, closest_so_far, temp_rec)) {
-                hit_anything = true;
-                closest_so_far = temp_rec.t;
-                rec = temp_rec;
+            if (list[i]->hit(r, t_minimum, nearest, temp_record)) {
+                hitany = true;
+                nearest = temp_record.t;
+                record = temp_record;
             }
         }
-        return hit_anything;
+        return hitany;
 }
 
 #endif
